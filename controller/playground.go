@@ -3,13 +3,13 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/types"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,19 +20,22 @@ func Playground(c *gin.Context) {
 	defer func() {
 		if newAPIError != nil {
 			c.JSON(newAPIError.StatusCode, gin.H{
-				"error": newAPIError.ToOpenAIError(),
+				"error": newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...),
 			})
 		}
 	}()
 
 	useAccessToken := c.GetBool("use_access_token")
 	if useAccessToken {
-		newAPIError = types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
+		newAPIError = types.NewError(errors.New(i18n.T(c, i18n.MsgRelayAccessTokenUnsupported)), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
 		return
 	}
 
-	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-	modelName := c.GetString("original_model")
+	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, nil, nil)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+		return
+	}
 
 	userId := c.GetInt("id")
 
@@ -46,16 +49,10 @@ func Playground(c *gin.Context) {
 
 	tempToken := &model.Token{
 		UserId: userId,
-		Name:   fmt.Sprintf("playground-%s", group),
-		Group:  group,
+		Name:   fmt.Sprintf("playground-%s", relayInfo.UsingGroup),
+		Group:  relayInfo.UsingGroup,
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
-	_, newAPIError = getChannel(c, group, modelName, 0)
-	if newAPIError != nil {
-		return
-	}
-	//middleware.SetupContextForSelectedChannel(c, channel, playgroundRequest.Model)
-	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 
 	Relay(c, types.RelayFormatOpenAI)
 }

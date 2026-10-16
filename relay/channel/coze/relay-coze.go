@@ -10,11 +10,12 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,14 +34,14 @@ func convertCozeChatRequest(c *gin.Context, request dto.GeneralOpenAIRequest) *C
 		}
 	}
 	user := request.User
-	if user == "" {
-		user = helper.GetResponseID(c)
+	if len(user) == 0 {
+		user = json.RawMessage(helper.GetResponseID(c))
 	}
 	cozeRequest := &CozeChatRequest{
 		BotId:              c.GetString("bot_id"),
 		UserId:             user,
 		AdditionalMessages: messages,
-		Stream:             request.Stream,
+		Stream:             lo.FromPtrOr(request.Stream, false),
 	}
 	return cozeRequest
 }
@@ -97,7 +98,7 @@ func cozeChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 }
 
 func cozeChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := helper.NewStreamScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 	helper.SetEventStreamHeaders(c)
 	id := helper.GetResponseID(c)
@@ -142,7 +143,7 @@ func cozeChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *ht
 	helper.Done(c)
 
 	if usage.TotalTokens == 0 {
-		usage = service.ResponseText2Usage(responseText, info.UpstreamModelName, c.GetInt("coze_input_count"))
+		usage = service.ResponseText2Usage(c, responseText, info.UpstreamModelName, c.GetInt("coze_input_count"))
 	}
 
 	return usage, nil
@@ -155,7 +156,7 @@ func handleCozeEvent(c *gin.Context, event string, data string, responseText *st
 		var chatData CozeChatResponseData
 		err := json.Unmarshal([]byte(data), &chatData)
 		if err != nil {
-			common.SysLog("error_unmarshalling_stream_response: " + err.Error())
+			common.SysLog(common.LogText("error_unmarshalling_stream_response: %s", err.Error()))
 			return
 		}
 
@@ -172,14 +173,14 @@ func handleCozeEvent(c *gin.Context, event string, data string, responseText *st
 		var messageData CozeChatV3MessageDetail
 		err := json.Unmarshal([]byte(data), &messageData)
 		if err != nil {
-			common.SysLog("error_unmarshalling_stream_response: " + err.Error())
+			common.SysLog(common.LogText("error_unmarshalling_stream_response: %s", err.Error()))
 			return
 		}
 
 		var content string
 		err = json.Unmarshal(messageData.Content, &content)
 		if err != nil {
-			common.SysLog("error_unmarshalling_stream_response: " + err.Error())
+			common.SysLog(common.LogText("error_unmarshalling_stream_response: %s", err.Error()))
 			return
 		}
 
@@ -204,11 +205,11 @@ func handleCozeEvent(c *gin.Context, event string, data string, responseText *st
 		var errorData CozeError
 		err := json.Unmarshal([]byte(data), &errorData)
 		if err != nil {
-			common.SysLog("error_unmarshalling_stream_response: " + err.Error())
+			common.SysLog(common.LogText("error_unmarshalling_stream_response: %s", err.Error()))
 			return
 		}
 
-		common.SysLog(fmt.Sprintf("stream event error: ", errorData.Code, errorData.Message))
+		common.SysLog(common.LogText("stream event error: %v %v", errorData.Code, errorData.Message))
 	}
 }
 
@@ -278,15 +279,9 @@ func getChatDetail(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo) (*ht
 }
 
 func doRequest(req *http.Request, info *relaycommon.RelayInfo) (*http.Response, error) {
-	var client *http.Client
-	var err error // 声明 err 变量
-	if info.ChannelSetting.Proxy != "" {
-		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
-		if err != nil {
-			return nil, fmt.Errorf("new proxy http client failed: %w", err)
-		}
-	} else {
-		client = service.GetHttpClient()
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil { // 增加对 client.Do(req) 返回错误的检查

@@ -1,50 +1,59 @@
 package aws
 
 import (
+	"context"
+	"encoding/json"
 	"io"
+	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 type AwsClaudeRequest struct {
 	// AnthropicVersion should be "bedrock-2023-05-31"
-	AnthropicVersion string              `json:"anthropic_version"`
-	System           any                 `json:"system,omitempty"`
-	Messages         []dto.ClaudeMessage `json:"messages"`
-	MaxTokens        uint                `json:"max_tokens,omitempty"`
-	Temperature      *float64            `json:"temperature,omitempty"`
-	TopP             float64             `json:"top_p,omitempty"`
-	TopK             int                 `json:"top_k,omitempty"`
-	StopSequences    []string            `json:"stop_sequences,omitempty"`
-	Tools            any                 `json:"tools,omitempty"`
-	ToolChoice       any                 `json:"tool_choice,omitempty"`
-	Thinking         *dto.Thinking       `json:"thinking,omitempty"`
+	AnthropicVersion  string              `json:"anthropic_version"`
+	AnthropicBeta     json.RawMessage     `json:"anthropic_beta,omitempty"`
+	System            any                 `json:"system,omitempty"`
+	Messages          []dto.ClaudeMessage `json:"messages"`
+	MaxTokens         *uint               `json:"max_tokens,omitempty"`
+	Temperature       *float64            `json:"temperature,omitempty"`
+	TopP              *float64            `json:"top_p,omitempty"`
+	TopK              *int                `json:"top_k,omitempty"`
+	StopSequences     []string            `json:"stop_sequences,omitempty"`
+	Tools             any                 `json:"tools,omitempty"`
+	ToolChoice        any                 `json:"tool_choice,omitempty"`
+	ContextManagement json.RawMessage     `json:"context_management,omitempty"`
+	Thinking          *dto.Thinking       `json:"thinking,omitempty"`
+	OutputConfig      json.RawMessage     `json:"output_config,omitempty"`
+	//Metadata         json.RawMessage     `json:"metadata,omitempty"`
 }
 
-func copyRequest(req *dto.ClaudeRequest) *AwsClaudeRequest {
-	return &AwsClaudeRequest{
-		AnthropicVersion: "bedrock-2023-05-31",
-		System:           req.System,
-		Messages:         req.Messages,
-		MaxTokens:        req.MaxTokens,
-		Temperature:      req.Temperature,
-		TopP:             req.TopP,
-		TopK:             req.TopK,
-		StopSequences:    req.StopSequences,
-		Tools:            req.Tools,
-		ToolChoice:       req.ToolChoice,
-		Thinking:         req.Thinking,
-	}
-}
-
-func formatRequest(requestBody io.Reader) (*AwsClaudeRequest, error) {
+func formatRequest(requestBody io.Reader, requestHeader http.Header) (*AwsClaudeRequest, error) {
 	var awsClaudeRequest AwsClaudeRequest
 	err := common.DecodeJson(requestBody, &awsClaudeRequest)
 	if err != nil {
 		return nil, err
 	}
 	awsClaudeRequest.AnthropicVersion = "bedrock-2023-05-31"
+
+	// check header anthropic-beta
+	var betas []string
+	for beta := range strings.SplitSeq(requestHeader.Get("anthropic-beta"), ",") {
+		if beta = strings.TrimSpace(beta); beta != "" {
+			betas = append(betas, beta)
+		}
+	}
+	if len(betas) > 0 {
+		betaJson, err := common.Marshal(betas)
+		if err != nil {
+			return nil, err
+		}
+		awsClaudeRequest.AnthropicBeta = betaJson
+	}
+	logger.LogJson(context.Background(), "json", awsClaudeRequest)
 	return &awsClaudeRequest, nil
 }
 
@@ -88,19 +97,19 @@ func convertToNovaRequest(req *dto.GeneralOpenAIRequest) *NovaRequest {
 	}
 
 	// 设置推理配置
-	if req.MaxTokens != 0 || (req.Temperature != nil && *req.Temperature != 0) || req.TopP != 0 || req.TopK != 0 || req.Stop != nil {
+	if (req.MaxTokens != nil && *req.MaxTokens != 0) || (req.Temperature != nil && *req.Temperature != 0) || (req.TopP != nil && *req.TopP != 0) || (req.TopK != nil && *req.TopK != 0) || req.Stop != nil {
 		novaReq.InferenceConfig = &NovaInferenceConfig{}
-		if req.MaxTokens != 0 {
-			novaReq.InferenceConfig.MaxTokens = int(req.MaxTokens)
+		if req.MaxTokens != nil && *req.MaxTokens != 0 {
+			novaReq.InferenceConfig.MaxTokens = int(*req.MaxTokens)
 		}
 		if req.Temperature != nil && *req.Temperature != 0 {
 			novaReq.InferenceConfig.Temperature = *req.Temperature
 		}
-		if req.TopP != 0 {
-			novaReq.InferenceConfig.TopP = req.TopP
+		if req.TopP != nil && *req.TopP != 0 {
+			novaReq.InferenceConfig.TopP = *req.TopP
 		}
-		if req.TopK != 0 {
-			novaReq.InferenceConfig.TopK = req.TopK
+		if req.TopK != nil && *req.TopK != 0 {
+			novaReq.InferenceConfig.TopK = *req.TopK
 		}
 		if req.Stop != nil {
 			if stopSequences := parseStopSequences(req.Stop); len(stopSequences) > 0 {
@@ -125,7 +134,7 @@ func parseStopSequences(stop any) []string {
 		}
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		var sequences []string
 		for _, item := range v {
 			if str, ok := item.(string); ok && str != "" {

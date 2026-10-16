@@ -3,19 +3,25 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
@@ -28,7 +34,7 @@ var channelId2Models map[int][]string
 
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
-	for i := 0; i < constant.APITypeDummy; i++ {
+	for i := range constant.APITypeDummy {
 		if i == constant.APITypeAIProxyLibrary {
 			continue
 		}
@@ -92,6 +98,9 @@ func init() {
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {
+			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
+				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			}
 			continue
 		}
 		meta := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
@@ -100,81 +109,168 @@ func init() {
 		adaptor := relay.GetAdaptor(apiType)
 		adaptor.Init(meta)
 		channelId2Models[i] = adaptor.GetModelList()
+		if len(channelId2Models[i]) == 0 {
+			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
+				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			}
+		}
 	}
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
 }
 
-func ListModels(c *gin.Context, modelType int) {
-	userOpenAiModels := make([]dto.OpenAIModels, 0)
+func channelOwnerName(channelType int) string {
+	apiType, success := common.ChannelType2APIType(channelType)
+	if !success {
+		return strings.ToLower(constant.GetChannelTypeName(channelType))
+	}
+	adaptor := relay.GetAdaptor(apiType)
+	if adaptor == nil {
+		return strings.ToLower(constant.GetChannelTypeName(channelType))
+	}
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType: channelType,
+	}})
+	if name := strings.TrimSpace(adaptor.GetChannelName()); name != "" {
+		return name
+	}
+	return strings.ToLower(constant.GetChannelTypeName(channelType))
+}
 
-	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-	if modelLimitEnable {
-		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-		var tokenModelLimit map[string]bool
-		if ok {
-			tokenModelLimit = s.(map[string]bool)
-		} else {
-			tokenModelLimit = map[string]bool{}
+func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
+	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
+	if err != nil {
+		common.SysLog(common.LogText("GetPreferredModelOwnerChannelTypes error: %v", err))
+		return map[string]string{}
+	}
+
+	ownerByChannelType := make(map[int]string)
+	owners := make(map[string]string, len(channelTypes))
+	for modelName, channelType := range channelTypes {
+		owner, ok := ownerByChannelType[channelType]
+		if !ok {
+			owner = channelOwnerName(channelType)
+			ownerByChannelType[channelType] = owner
 		}
-		for allowModel, _ := range tokenModelLimit {
-			if oaiModel, ok := openAIModelsMap[allowModel]; ok {
-				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(allowModel)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
-			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
-					Id:                     allowModel,
-					Object:                 "model",
-					Created:                1626777600,
-					OwnedBy:                "custom",
-					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(allowModel),
-				})
-			}
+		if owner != "" {
+			owners[modelName] = owner
 		}
+	}
+	return owners
+}
+
+func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
+	var oaiModel dto.OpenAIModels
+	if staticModel, ok := openAIModelsMap[modelName]; ok {
+		oaiModel = staticModel
 	} else {
-		userId := c.GetInt("id")
-		userGroup, err := model.GetUserGroup(userId, false)
+		oaiModel = dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: "custom",
+		}
+	}
+	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
+		oaiModel.OwnedBy = owner
+	}
+	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	return oaiModel
+}
+
+type modelListGroups struct {
+	userGroup   string
+	tokenGroup  string
+	ownerGroups []string
+}
+
+func getModelListGroups(c *gin.Context) (modelListGroups, error) {
+	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" && (tokenGroup == "" || tokenGroup == "auto") {
+		var err error
+		userGroup, err = model.GetUserGroup(c.GetInt("id"), false)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "get user group failed",
-			})
-			return
+			return modelListGroups{}, err
 		}
-		group := userGroup
-		tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
-		if tokenGroup != "" {
-			group = tokenGroup
-		}
-		var models []string
-		if tokenGroup == "auto" {
-			for _, autoGroup := range service.GetUserAutoGroup(userGroup) {
-				groupModels := model.GetGroupEnabledModels(autoGroup)
-				for _, g := range groupModels {
-					if !common.StringsContains(models, g) {
-						models = append(models, g)
-					}
-				}
-			}
-		} else {
-			models = model.GetGroupEnabledModels(group)
-		}
-		for _, modelName := range models {
-			if oaiModel, ok := openAIModelsMap[modelName]; ok {
-				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
-				userOpenAiModels = append(userOpenAiModels, oaiModel)
-			} else {
-				userOpenAiModels = append(userOpenAiModels, dto.OpenAIModels{
-					Id:                     modelName,
-					Object:                 "model",
-					Created:                1626777600,
-					OwnedBy:                "custom",
-					SupportedEndpointTypes: model.GetModelSupportEndpointTypes(modelName),
-				})
+	}
+
+	if tokenGroup == "auto" {
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: service.GetRequestAutoGroups(c, userGroup),
+		}, nil
+	}
+
+	group := userGroup
+	if tokenGroup != "" {
+		group = tokenGroup
+	}
+	return modelListGroups{
+		userGroup:   userGroup,
+		tokenGroup:  tokenGroup,
+		ownerGroups: []string{group},
+	}, nil
+}
+
+func ListModels(c *gin.Context, modelType int) {
+	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
+	if !acceptUnsetRatioModel {
+		userId := c.GetInt("id")
+		if userId > 0 {
+			userSettings, _ := model.GetUserSetting(userId, false)
+			if userSettings.AcceptUnsetRatioModel {
+				acceptUnsetRatioModel = true
 			}
 		}
 	}
+
+	userModelNames := make([]string, 0)
+	groups, err := getModelListGroups(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "get user group failed",
+		})
+		return
+	}
+	ownerGroups := groups.ownerGroups
+	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+	var tokenModelLimit map[string]bool
+	if modelLimitEnable {
+		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		if ok {
+			tokenModelLimit, _ = s.(map[string]bool)
+		}
+		if tokenModelLimit == nil {
+			tokenModelLimit = map[string]bool{}
+		}
+	}
+	models := service.GetGroupsEnabledModels(ownerGroups)
+	for _, modelName := range models {
+		if modelLimitEnable {
+			matchingName := ratio_setting.RoutingMatchModelName(modelName)
+			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
+				continue
+			}
+		}
+		if !acceptUnsetRatioModel && !helper.HasModelBillingConfig(modelName) {
+			continue
+		}
+		userModelNames = append(userModelNames, modelName)
+	}
+
+	ownerByModel := map[string]string{}
+	if len(ownerGroups) > 0 {
+		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
+	}
+	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
+	for _, modelName := range userModelNames {
+		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+	}
+
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
 		useranthropicModels := make([]dto.AnthropicModel, len(userOpenAiModels))
@@ -186,11 +282,17 @@ func ListModels(c *gin.Context, modelType int) {
 				Type:        "model",
 			}
 		}
+		firstID := ""
+		lastID := ""
+		if len(useranthropicModels) > 0 {
+			firstID = useranthropicModels[0].ID
+			lastID = useranthropicModels[len(useranthropicModels)-1].ID
+		}
 		c.JSON(200, gin.H{
 			"data":     useranthropicModels,
-			"first_id": useranthropicModels[0].ID,
+			"first_id": firstID,
 			"has_more": false,
-			"last_id":  useranthropicModels[len(useranthropicModels)-1].ID,
+			"last_id":  lastID,
 		})
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))
@@ -221,9 +323,18 @@ func ChannelListModels(c *gin.Context) {
 }
 
 func DashboardListModels(c *gin.Context) {
+	modelsByChannel := make(map[int][]string, len(channelId2Models))
+	for channelType, models := range channelId2Models {
+		modelsByChannel[channelType] = append([]string(nil), models...)
+	}
+	for channelType := 1; channelType <= constant.ChannelTypeDummy; channelType++ {
+		if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(channelType); ok {
+			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
+		}
+	}
 	c.JSON(200, gin.H{
 		"success": true,
-		"data":    channelId2Models,
+		"data":    modelsByChannel,
 	})
 }
 
@@ -249,7 +360,7 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			c.JSON(200, aiModel)
 		}
 	} else {
-		openAIError := dto.OpenAIError{
+		openAIError := types.OpenAIError{
 			Message: fmt.Sprintf("The model '%s' does not exist", modelId),
 			Type:    "invalid_request_error",
 			Param:   "model",

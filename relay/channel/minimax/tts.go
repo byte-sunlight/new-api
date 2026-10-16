@@ -9,9 +9,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -163,7 +164,7 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	}
 
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
 		TotalTokens:      int(minimaxResp.ExtraInfo.UsageCharacters),
 	}
@@ -184,6 +185,9 @@ func handleChatCompletionResponse(c *gin.Context, resp *http.Response, info *rel
 
 	// Set response headers
 	for key, values := range resp.Header {
+		if !service.ShouldCopyUpstreamHeader(c, key, values) {
+			continue
+		}
 		for _, value := range values {
 			c.Header(key, value)
 		}

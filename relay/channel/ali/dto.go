@@ -1,15 +1,12 @@
 package ali
 
-import "github.com/QuantumNous/new-api/dto"
+import (
+	"github.com/QuantumNous/new-api/relaykit/dto"
+)
 
 type AliMessage struct {
 	Content any    `json:"content"`
 	Role    string `json:"role"`
-}
-
-type AliMediaContent struct {
-	Image string `json:"image,omitempty"`
-	Text  string `json:"text,omitempty"`
 }
 
 type AliInput struct {
@@ -28,8 +25,8 @@ type AliParameters struct {
 
 type AliChatRequest struct {
 	Model      string        `json:"model"`
-	Input      AliInput      `json:"input,omitempty"`
-	Parameters AliParameters `json:"parameters,omitempty"`
+	Input      AliInput      `json:"input"`
+	Parameters AliParameters `json:"parameters"`
 }
 
 type AliEmbeddingRequest struct {
@@ -67,51 +64,6 @@ type AliUsage struct {
 	TotalTokens  int `json:"total_tokens"`
 }
 
-type TaskResult struct {
-	B64Image string `json:"b64_image,omitempty"`
-	Url      string `json:"url,omitempty"`
-	Code     string `json:"code,omitempty"`
-	Message  string `json:"message,omitempty"`
-}
-
-type AliOutput struct {
-	TaskId       string           `json:"task_id,omitempty"`
-	TaskStatus   string           `json:"task_status,omitempty"`
-	Text         string           `json:"text"`
-	FinishReason string           `json:"finish_reason"`
-	Message      string           `json:"message,omitempty"`
-	Code         string           `json:"code,omitempty"`
-	Results      []TaskResult     `json:"results,omitempty"`
-	Choices      []map[string]any `json:"choices,omitempty"`
-}
-
-type AliResponse struct {
-	Output AliOutput `json:"output"`
-	Usage  AliUsage  `json:"usage"`
-	AliError
-}
-
-type AliImageRequest struct {
-	Model          string `json:"model"`
-	Input          any    `json:"input"`
-	Parameters     any    `json:"parameters,omitempty"`
-	ResponseFormat string `json:"response_format,omitempty"`
-}
-
-type AliImageParameters struct {
-	Size      string `json:"size,omitempty"`
-	N         int    `json:"n,omitempty"`
-	Steps     string `json:"steps,omitempty"`
-	Scale     string `json:"scale,omitempty"`
-	Watermark *bool  `json:"watermark,omitempty"`
-}
-
-type AliImageInput struct {
-	Prompt         string       `json:"prompt,omitempty"`
-	NegativePrompt string       `json:"negative_prompt,omitempty"`
-	Messages       []AliMessage `json:"messages,omitempty"`
-}
-
 type AliRerankParameters struct {
 	TopN            *int  `json:"top_n,omitempty"`
 	ReturnDocuments *bool `json:"return_documents,omitempty"`
@@ -125,7 +77,7 @@ type AliRerankInput struct {
 type AliRerankRequest struct {
 	Model      string              `json:"model"`
 	Input      AliRerankInput      `json:"input"`
-	Parameters AliRerankParameters `json:"parameters,omitempty"`
+	Parameters AliRerankParameters `json:"parameters"`
 }
 
 type AliRerankResponse struct {

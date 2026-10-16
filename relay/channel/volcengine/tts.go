@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -184,9 +184,9 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	c.Data(http.StatusOK, contentType, audioData)
 
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.GetEstimatePromptTokens(),
 	}
 
 	return usage, nil
@@ -284,9 +284,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 			if msg.Sequence < 0 {
 				c.Status(http.StatusOK)
 				usage = &dto.Usage{
-					PromptTokens:     info.PromptTokens,
+					PromptTokens:     info.GetEstimatePromptTokens(),
 					CompletionTokens: 0,
-					TotalTokens:      info.PromptTokens,
+					TotalTokens:      info.GetEstimatePromptTokens(),
 				}
 				return usage, nil
 			}
@@ -297,9 +297,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 
 	c.Status(http.StatusOK)
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.GetEstimatePromptTokens(),
 	}
 	return usage, nil
 }

@@ -2,7 +2,9 @@ package common
 
 import (
 	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -15,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -160,39 +163,14 @@ func Bytes2Size(num int64) string {
 	return numStr + " " + unit
 }
 
-func Seconds2Time(num int) (time string) {
-	if num/31104000 > 0 {
-		time += strconv.Itoa(num/31104000) + " 年 "
-		num %= 31104000
-	}
-	if num/2592000 > 0 {
-		time += strconv.Itoa(num/2592000) + " 个月 "
-		num %= 2592000
-	}
-	if num/86400 > 0 {
-		time += strconv.Itoa(num/86400) + " 天 "
-		num %= 86400
-	}
-	if num/3600 > 0 {
-		time += strconv.Itoa(num/3600) + " 小时 "
-		num %= 3600
-	}
-	if num/60 > 0 {
-		time += strconv.Itoa(num/60) + " 分钟 "
-		num %= 60
-	}
-	time += strconv.Itoa(num) + " 秒"
-	return
-}
-
-func Interface2String(inter interface{}) string {
+func Interface2String(inter any) string {
 	switch inter.(type) {
 	case string:
 		return inter.(string)
 	case int:
 		return fmt.Sprintf("%d", inter.(int))
 	case float64:
-		return fmt.Sprintf("%f", inter.(float64))
+		return strconv.FormatFloat(inter.(float64), 'f', -1, 64)
 	case bool:
 		if inter.(bool) {
 			return "true"
@@ -205,7 +183,7 @@ func Interface2String(inter interface{}) string {
 	return fmt.Sprintf("%v", inter)
 }
 
-func UnescapeHTML(x string) interface{} {
+func UnescapeHTML(x string) any {
 	return template.HTML(x)
 }
 
@@ -215,11 +193,6 @@ func IntMax(a int, b int) int {
 	} else {
 		return b
 	}
-}
-
-func IsIP(s string) bool {
-	ip := net.ParseIP(s)
-	return ip != nil
 }
 
 func GetUUID() string {
@@ -268,8 +241,20 @@ func GetTimestamp() int64 {
 }
 
 func GetTimeString() string {
-	now := time.Now()
-	return fmt.Sprintf("%s%d", now.Format("20060102150405"), now.UnixNano()%1e9)
+	now := time.Now().UTC()
+	return fmt.Sprintf("%s%09d", now.Format("20060102150405"), now.UnixNano()%1e9)
+}
+
+var requestIdPrefix = func() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Path != "" {
+		h := sha256.Sum256([]byte(bi.Main.Path))
+		return hex.EncodeToString(h[:4])
+	}
+	return GetRandomString(8)
+}()
+
+func NewRequestId() string {
+	return GetTimeString() + requestIdPrefix + GetRandomString(8)
 }
 
 func Max(a int, b int) int {

@@ -3,8 +3,9 @@ package constant
 type ContextKey string
 
 const (
-	ContextKeyTokenCountMeta ContextKey = "token_count_meta"
-	ContextKeyPromptTokens   ContextKey = "prompt_tokens"
+	ContextKeyTokenCountMeta  ContextKey = "token_count_meta"
+	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
+	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
@@ -14,9 +15,12 @@ const (
 	ContextKeyTokenKey               ContextKey = "token_key"
 	ContextKeyTokenId                ContextKey = "token_id"
 	ContextKeyTokenGroup             ContextKey = "token_group"
-	ContextKeyTokenSpecificChannelId ContextKey = "specific_channel_id"
+	ContextKeyOriginTasks            ContextKey = "origin_tasks"
+	ContextKeyChannelConstraints     ContextKey = "channel_constraints"
 	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
 	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
+	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
+	ContextKeyTokenAutoGroups        ContextKey = "token_auto_groups"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"
@@ -36,6 +40,15 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 
+	// ContextKeyUpstreamRequestOrigin is the scheme and host of the last upstream
+	// request, which differs from the base URL for absolute Advanced Custom routes
+	// and for adaptors that build official endpoints themselves.
+	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
+
+	ContextKeyAutoGroup           ContextKey = "auto_group"
+	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
+	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
+
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"
 	ContextKeyUserSetting ContextKey = "user_setting"
@@ -46,5 +59,30 @@ const (
 	ContextKeyUsingGroup  ContextKey = "group"
 	ContextKeyUserName    ContextKey = "username"
 
+	ContextKeyLocalCountTokens ContextKey = "local_count_tokens"
+
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
+
+	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
+	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
+
+	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
+	// It is not returned to end users, but can be persisted into consume/error logs for debugging.
+	ContextKeyAdminRejectReason ContextKey = "admin_reject_reason"
+
+	// ContextKeyLanguage stores the user's language preference for i18n
+	ContextKeyLanguage             ContextKey = "language"
+	ContextKeyIsStream             ContextKey = "is_stream"
+	ContextKeyResponseStreamStatus ContextKey = "response_stream_status"
+
+	// ContextKeyAuditLogged marks that the current request has already recorded
+	// a manage/operation audit log inside the handler. When set, the admin-audit
+	// fallback in authHelper (finishAdminAudit) skips its record to avoid
+	// duplicate entries.
+	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyTokenAuditParams contains only the API token operation's safe metadata.
+	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
+	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
+	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 )

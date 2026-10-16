@@ -16,11 +16,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,12 +37,12 @@ func requestOpenAI2Tencent(a *Adaptor, request dto.GeneralOpenAIRequest) *Tencen
 		})
 	}
 	var req = TencentChatRequest{
-		Stream:   &request.Stream,
+		Stream:   request.Stream,
 		Messages: messages,
 		Model:    &request.Model,
 	}
-	if request.TopP != 0 {
-		req.TopP = &request.TopP
+	if request.TopP != nil {
+		req.TopP = request.TopP
 	}
 	req.Temperature = request.Temperature
 	return &req
@@ -91,8 +91,8 @@ func streamResponseTencent2OpenAI(TencentResponse *TencentChatResponse) *dto.Cha
 }
 
 func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	var responseText string
-	scanner := bufio.NewScanner(resp.Body)
+	var responseText strings.Builder
+	scanner := helper.NewStreamScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 
 	helper.SetEventStreamHeaders(c)
@@ -105,15 +105,15 @@ func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 		data = strings.TrimPrefix(data, "data:")
 
 		var tencentResponse TencentChatResponse
-		err := json.Unmarshal([]byte(data), &tencentResponse)
+		err := common.Unmarshal([]byte(data), &tencentResponse)
 		if err != nil {
-			common.SysLog("error unmarshalling stream response: " + err.Error())
+			common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
 			continue
 		}
 
 		response := streamResponseTencent2OpenAI(&tencentResponse)
 		if len(response.Choices) != 0 {
-			responseText += response.Choices[0].Delta.GetContentString()
+			responseText.WriteString(response.Choices[0].Delta.GetContentString())
 		}
 
 		err = helper.ObjectData(c, response)
@@ -123,14 +123,14 @@ func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 	}
 
 	if err := scanner.Err(); err != nil {
-		common.SysLog("error reading stream: " + err.Error())
+		common.SysLog(common.LogText("error reading stream: %s", err.Error()))
 	}
 
 	helper.Done(c)
 
 	service.CloseResponseBodyGracefully(resp)
 
-	return service.ResponseText2Usage(responseText, info.UpstreamModelName, info.PromptTokens), nil
+	return service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens()), nil
 }
 
 func tencentHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
